@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mpkg"
+version = "0.1.0"
+description = "Declarative cross-distro Linux package manager wrapper"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.28",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+mpkg = "mpkg.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mpkg"]
