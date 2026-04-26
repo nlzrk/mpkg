@@ -1,9 +1,11 @@
 from .apt import AptBackend
 from .base import Backend
 from .dnf import DnfBackend
+from .nix import NixBackend
 from .pacman import PacmanBackend
 
-_ALL: list[Backend] = [PacmanBackend(), AptBackend(), DnfBackend()]
+# Nix is last — native backends are preferred when available
+_ALL: list[Backend] = [PacmanBackend(), AptBackend(), DnfBackend(), NixBackend()]
 
 
 def detect_backends() -> list[Backend]:

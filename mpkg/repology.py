@@ -10,6 +10,7 @@ _BACKEND_REPOS: dict[str, list[str]] = {
     "apt":    ["ubuntu", "debian"],
     "dnf":    ["fedora", "epel"],
     "pacman": ["arch"],
+    "nix":    ["nix"],
 }
 
 
@@ -24,6 +25,8 @@ def _url_for(entry: dict, backend: str) -> str:
         return f"https://packages.ubuntu.com/{name}"
     if backend == "dnf":
         return f"https://packages.fedoraproject.org/pkgs/{name}/"
+    if backend == "nix":
+        return f"https://search.nixos.org/packages?query={name}"
     return ""
 
 
