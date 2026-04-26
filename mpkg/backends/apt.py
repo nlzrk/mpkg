@@ -31,3 +31,7 @@ class AptBackend(Backend):
             if len(parts) >= 4 and parts[1:4] == ["install", "ok", "installed"]:
                 pkgs.add(parts[0])
         return pkgs
+
+    def list_explicit(self) -> set[str]:
+        r = subprocess.run(["apt-mark", "showmanual"], capture_output=True, text=True)
+        return {line.strip() for line in r.stdout.splitlines() if line.strip()}

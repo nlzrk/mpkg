@@ -22,3 +22,8 @@ class PacmanBackend(Backend):
     def list_installed(self) -> set[str]:
         r = subprocess.run(["pacman", "-Q"], capture_output=True, text=True)
         return {line.split()[0] for line in r.stdout.splitlines() if line.split()}
+
+    def list_explicit(self) -> set[str]:
+        # -Qe: explicitly installed, not pulled in as a dependency
+        r = subprocess.run(["pacman", "-Qe"], capture_output=True, text=True)
+        return {line.split()[0] for line in r.stdout.splitlines() if line.split()}

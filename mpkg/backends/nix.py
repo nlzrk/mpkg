@@ -31,3 +31,7 @@ class NixBackend(Backend):
             return {attrs.get("pname", "") for attrs in data.values() if attrs.get("pname")}
         except (json.JSONDecodeError, AttributeError):
             return set()
+
+    def list_explicit(self) -> set[str]:
+        # Everything in a user's nix-env profile is explicitly installed
+        return self.list_installed()

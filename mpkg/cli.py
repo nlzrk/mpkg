@@ -185,6 +185,66 @@ def cmd_sync(_args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# import
+# ---------------------------------------------------------------------------
+
+def cmd_import(args: argparse.Namespace) -> None:
+    config = cfg.load()
+
+    backends = detect_backends()
+    if not backends:
+        console.print("[red]No supported package manager found.[/red]")
+        sys.exit(1)
+
+    backend = backends[0]
+    console.print(f"Scanning explicitly installed packages via [bold]{backend.name}[/bold]…\n")
+
+    explicit = backend.list_explicit()
+    if not explicit:
+        console.print("[yellow]No explicitly installed packages found.[/yellow]")
+        return
+
+    already = {p for p in config["packages"] if p in explicit}
+    new_pkgs = sorted(explicit - set(config["packages"]))
+
+    if not new_pkgs:
+        console.print(f"All {len(already)} explicit packages are already in config.")
+        return
+
+    table = Table(show_lines=False, box=None, pad_edge=False)
+    table.add_column("Package", style="cyan")
+    table.add_column("", style="dim")
+
+    for pkg in new_pkgs:
+        table.add_row(pkg, "new")
+    for pkg in sorted(already):
+        table.add_row(pkg, "already tracked")
+
+    console.print(table)
+    console.print(
+        f"\n[bold]{len(new_pkgs)}[/bold] new, "
+        f"[dim]{len(already)} already tracked[/dim]\n"
+    )
+    console.print(
+        "[dim]Note: names are distro-specific. On other distros some may not resolve "
+        "— run 'mpkg status' after syncing to a new machine.[/dim]\n"
+    )
+
+    if not args.yes:
+        reply = console.input(f"Add {len(new_pkgs)} packages to config? [Y/n] ").strip()
+        if reply and reply.lower() != "y":
+            console.print("Aborted.")
+            return
+
+    for pkg in new_pkgs:
+        cfg.add_package(config, pkg)
+        cfg.write_override(config, pkg, backend.name, pkg)
+
+    cfg.save(config)
+    console.print(f"[green]✓[/green] Added {len(new_pkgs)} packages to config.")
+
+
+# ---------------------------------------------------------------------------
 # search
 # ---------------------------------------------------------------------------
 
@@ -278,6 +338,9 @@ def main() -> None:
 
     sub.add_parser("status", help="Diff config vs currently installed packages")
 
+    p = sub.add_parser("import", help="Import explicitly installed packages into config")
+    p.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+
     args = parser.parse_args()
     {
         "install": cmd_install,
@@ -285,6 +348,7 @@ def main() -> None:
         "sync":    cmd_sync,
         "search":  cmd_search,
         "status":  cmd_status,
+        "import":  cmd_import,
     }[args.command](args)
 
 

@@ -20,3 +20,6 @@ class Backend(ABC):
 
     @abstractmethod
     def list_installed(self) -> set[str]: ...
+
+    @abstractmethod
+    def list_explicit(self) -> set[str]: ...
