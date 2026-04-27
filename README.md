@@ -131,8 +131,9 @@ Done. 10 installed (1 new), 1 skipped, 0 failed.
 Adopts packages you already have installed into your config. Only imports packages you explicitly installed — not auto-installed dependencies.
 
 ```bash
-mpkg import        # shows what will be added, prompts for confirmation
-mpkg import --yes  # non-interactive, useful in bootstrap scripts
+mpkg import           # shows what will be added, prompts for confirmation
+mpkg import --yes     # non-interactive, useful in bootstrap scripts
+mpkg import --prune   # also remove config entries for packages you've since uninstalled
 ```
 
 Example output:
@@ -207,6 +208,28 @@ mpkg status
 - **installed** — in config and present on the system
 - **missing** — in config but not installed (run `mpkg sync` to fix)
 - **unresolvable** — mpkg can't find a match on Repology for this distro
+
+---
+
+### `mpkg setup-hooks`
+
+Installs a hook into your package manager so the config updates automatically whenever you install or remove packages — even if you use `apt`/`pacman`/`dnf` directly instead of going through mpkg.
+
+```bash
+sudo mpkg setup-hooks
+```
+
+Must be run as root because it writes into system hook directories. It detects the current user from `$SUDO_USER` so the right config file is updated, not root's.
+
+What gets installed per backend:
+
+| Backend | Hook location |
+|---|---|
+| apt | `/etc/apt/apt.conf.d/99mpkg` |
+| pacman | `/etc/pacman.d/hooks/mpkg.hook` |
+| dnf | DNF plugin in the Python site-packages `dnf-plugins/` directory |
+
+After setup, every `apt install`, `pacman -S`, or `dnf install` will automatically run `mpkg import --yes --prune` in the background, keeping your config file in sync without any extra steps.
 
 ---
 
