@@ -34,6 +34,7 @@ It is not a new package manager. It wraps the one you already have (apt, dnf, pa
 ## Installation
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/nlzrk/mpkg/main/install.sh | bash
 curl -fsSL https://raw.githubusercontent.com/nlzrk/mpkg/main/install.sh | sh
 ```
 

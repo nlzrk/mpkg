@@ -1,4 +1,7 @@
 import argparse
+import os
+import pwd
+import shutil
 import sys
 
 import requests
@@ -25,7 +28,6 @@ def cmd_install(args: argparse.Namespace) -> None:
         console.print("[red]No supported package manager found (apt/dnf/pacman).[/red]")
         sys.exit(1)
 
-    # Gather (backend, best_entry) pairs for every backend that has the package
     options: list[tuple] = []
     for backend in backends:
         candidates = resolver.resolve_with_candidates(canonical, backend, config)
@@ -139,7 +141,6 @@ def cmd_sync(_args: argparse.Namespace) -> None:
     already = skipped = failed = installed = 0
 
     for canonical in packages:
-        # Check resolved cache before hitting Repology
         cached_name = cfg.get_resolved_name(config, backend.name, canonical)
         if cached_name and cached_name in installed_set:
             console.print(f"  [dim]✓ {canonical} already installed[/dim]")
@@ -204,11 +205,18 @@ def cmd_import(args: argparse.Namespace) -> None:
         console.print("[yellow]No explicitly installed packages found.[/yellow]")
         return
 
-    already = {p for p in config["packages"] if p in explicit}
-    new_pkgs = sorted(explicit - set(config["packages"]))
+    # Packages to add — explicitly installed but not yet in config
+    in_config = set(config["packages"])
+    new_pkgs = sorted(explicit - in_config)
 
-    if not new_pkgs:
-        console.print(f"All {len(already)} explicit packages are already in config.")
+    # Packages to remove — in config but their backend name is no longer installed
+    # (only when --prune is active, e.g. called from a package manager hook)
+    stale_pkgs: list[str] = []
+    if args.prune:
+        stale_pkgs = _find_stale(config, explicit, backend)
+
+    if not new_pkgs and not stale_pkgs:
+        console.print(f"Config is up to date ({len(in_config)} packages tracked).")
         return
 
     table = Table(show_lines=False, box=None, pad_edge=False)
@@ -216,22 +224,29 @@ def cmd_import(args: argparse.Namespace) -> None:
     table.add_column("", style="dim")
 
     for pkg in new_pkgs:
-        table.add_row(pkg, "new")
-    for pkg in sorted(already):
+        table.add_row(pkg, "[green]+ new[/green]")
+    for pkg in stale_pkgs:
+        table.add_row(pkg, "[red]- removed[/red]")
+    for pkg in sorted(in_config & explicit):
         table.add_row(pkg, "already tracked")
 
     console.print(table)
-    console.print(
-        f"\n[bold]{len(new_pkgs)}[/bold] new, "
-        f"[dim]{len(already)} already tracked[/dim]\n"
-    )
-    console.print(
-        "[dim]Note: names are distro-specific. On other distros some may not resolve "
-        "— run 'mpkg status' after syncing to a new machine.[/dim]\n"
-    )
+
+    parts = []
+    if new_pkgs:
+        parts.append(f"[bold]{len(new_pkgs)}[/bold] to add")
+    if stale_pkgs:
+        parts.append(f"[bold]{len(stale_pkgs)}[/bold] to remove")
+    console.print("\n" + ", ".join(parts) + "\n")
+
+    if new_pkgs:
+        console.print(
+            "[dim]Note: names are distro-specific. On other distros some may not resolve "
+            "— run 'mpkg status' after syncing to a new machine.[/dim]\n"
+        )
 
     if not args.yes:
-        reply = console.input(f"Add {len(new_pkgs)} packages to config? [Y/n] ").strip()
+        reply = console.input("Apply changes? [Y/n] ").strip()
         if reply and reply.lower() != "y":
             console.print("Aborted.")
             return
@@ -239,9 +254,28 @@ def cmd_import(args: argparse.Namespace) -> None:
     for pkg in new_pkgs:
         cfg.add_package(config, pkg)
         cfg.write_override(config, pkg, backend.name, pkg)
+    for pkg in stale_pkgs:
+        cfg.remove_package(config, pkg)
 
     cfg.save(config)
-    console.print(f"[green]✓[/green] Added {len(new_pkgs)} packages to config.")
+
+    done_parts = []
+    if new_pkgs:
+        done_parts.append(f"{len(new_pkgs)} added")
+    if stale_pkgs:
+        done_parts.append(f"{len(stale_pkgs)} removed")
+    console.print(f"[green]✓[/green] {', '.join(done_parts)}.")
+
+
+def _find_stale(config: dict, explicit: set[str], backend) -> list[str]:
+    """Return canonical names whose backend package is no longer explicitly installed."""
+    overrides = config.get("overrides", {})
+    stale = []
+    for canonical in config["packages"]:
+        backend_name = overrides.get(canonical, {}).get(backend.name, canonical)
+        if backend_name not in explicit:
+            stale.append(canonical)
+    return sorted(stale)
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +349,113 @@ def cmd_status(_args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# setup-hooks
+# ---------------------------------------------------------------------------
+
+def cmd_setup_hooks(_args: argparse.Namespace) -> None:
+    backends = detect_backends()
+    if not backends:
+        console.print("[red]No supported package manager found.[/red]")
+        sys.exit(1)
+
+    backend = backends[0]
+
+    if backend.name == "nix":
+        console.print("Nix tracks all user-env packages automatically — no hook needed.")
+        return
+
+    if os.geteuid() != 0:
+        console.print("[red]✗[/red] setup-hooks must be run as root (use sudo).")
+        sys.exit(1)
+
+    # When invoked via sudo, update the invoking user's config, not root's
+    target_user = os.environ.get("SUDO_USER") or os.environ.get("USER", "root")
+    try:
+        pw = pwd.getpwnam(target_user)
+        config_dir = os.path.join(pw.pw_dir, ".config", "mpkg")
+    except KeyError:
+        config_dir = os.path.expanduser("~/.config/mpkg")
+
+    mpkg_bin = shutil.which("mpkg") or "mpkg"
+    # The hook command: run as the target user so the right config is updated
+    hook_cmd = (
+        f'su -s /bin/sh -c '
+        f'"MPKG_CONFIG_DIR={config_dir} {mpkg_bin} import --yes --prune '
+        f'> /dev/null 2>&1 || true" {target_user}'
+    )
+
+    if backend.name == "apt":
+        _write_apt_hook(hook_cmd)
+    elif backend.name == "pacman":
+        _write_pacman_hook(hook_cmd)
+    elif backend.name == "dnf":
+        _write_dnf_plugin(config_dir, mpkg_bin, target_user)
+
+    console.print(f"[green]✓[/green] Hook installed for [bold]{backend.name}[/bold].")
+    console.print(f"  Watching config: [dim]{config_dir}/packages.yaml[/dim]")
+    console.print("  The config will now auto-update whenever you install or remove packages.")
+
+
+def _write_apt_hook(hook_cmd: str) -> None:
+    path = "/etc/apt/apt.conf.d/99mpkg"
+    content = f'DPkg::Post-Invoke {{ "{hook_cmd}"; }};\n'
+    with open(path, "w") as f:
+        f.write(content)
+    console.print(f"  Wrote [dim]{path}[/dim]")
+
+
+def _write_pacman_hook(hook_cmd: str) -> None:
+    hook_dir = "/etc/pacman.d/hooks"
+    os.makedirs(hook_dir, exist_ok=True)
+    path = f"{hook_dir}/mpkg.hook"
+    content = f"""\
+[Trigger]
+Operation = Install
+Operation = Remove
+Operation = Upgrade
+Type = Package
+Target = *
+
+[Action]
+Description = Updating mpkg config...
+When = PostTransaction
+Exec = /bin/sh -c '{hook_cmd}'
+"""
+    with open(path, "w") as f:
+        f.write(content)
+    console.print(f"  Wrote [dim]{path}[/dim]")
+
+
+def _write_dnf_plugin(config_dir: str, mpkg_bin: str, target_user: str) -> None:
+    import sysconfig
+    site = sysconfig.get_path("purelib")
+    plugin_dir = os.path.join(site, "dnf-plugins")
+    os.makedirs(plugin_dir, exist_ok=True)
+    path = os.path.join(plugin_dir, "mpkg.py")
+    content = f"""\
+import dnf
+import subprocess
+import os
+
+class MpkgPlugin(dnf.Plugin):
+    name = "mpkg"
+
+    def transaction(self):
+        env = os.environ.copy()
+        env["MPKG_CONFIG_DIR"] = {config_dir!r}
+        subprocess.run(
+            ["su", "-s", "/bin/sh", "-c",
+             f"{mpkg_bin} import --yes --prune > /dev/null 2>&1 || true",
+             {target_user!r}],
+            env=env,
+        )
+"""
+    with open(path, "w") as f:
+        f.write(content)
+    console.print(f"  Wrote [dim]{path}[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # entrypoint
 # ---------------------------------------------------------------------------
 
@@ -340,15 +481,21 @@ def main() -> None:
 
     p = sub.add_parser("import", help="Import explicitly installed packages into config")
     p.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    p.add_argument("--prune", action="store_true",
+                   help="Also remove config entries for packages no longer installed")
+
+    sub.add_parser("setup-hooks",
+                   help="Install package manager hooks to keep config in sync automatically")
 
     args = parser.parse_args()
     {
-        "install": cmd_install,
-        "remove":  cmd_remove,
-        "sync":    cmd_sync,
-        "search":  cmd_search,
-        "status":  cmd_status,
-        "import":  cmd_import,
+        "install":     cmd_install,
+        "remove":      cmd_remove,
+        "sync":        cmd_sync,
+        "search":      cmd_search,
+        "status":      cmd_status,
+        "import":      cmd_import,
+        "setup-hooks": cmd_setup_hooks,
     }[args.command](args)
 
 
