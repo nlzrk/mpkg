@@ -18,7 +18,8 @@ class AptBackend(Backend):
             ["dpkg-query", "-W", "-f=${Status}", package],
             capture_output=True, text=True,
         )
-        return r.returncode == 0 and "install ok installed" in r.stdout
+        # status field (4th word) is "installed" regardless of want/flag fields
+        return r.returncode == 0 and r.stdout.split()[-1:] == ["installed"]
 
     def list_installed(self) -> set[str]:
         r = subprocess.run(
@@ -28,7 +29,7 @@ class AptBackend(Backend):
         pkgs: set[str] = set()
         for line in r.stdout.splitlines():
             parts = line.split()
-            if len(parts) >= 4 and parts[1:4] == ["install", "ok", "installed"]:
+            if len(parts) >= 4 and parts[3] == "installed":
                 pkgs.add(parts[0])
         return pkgs
 
