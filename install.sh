@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
 
@@ -28,9 +28,10 @@ success "Python $PY_VERSION"
 
 info "Installing mpkg..."
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# BASH_SOURCE[0] is unset when the script is piped via stdin; fall back to $0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd 2>/dev/null || echo "")"
 
-if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/pyproject.toml" ]]; then
     # Running from a local checkout
     pip install --quiet "$SCRIPT_DIR"
 else
